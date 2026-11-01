@@ -1,123 +1,236 @@
-import os
 import json
+import os
+from functools import lru_cache
+
 import chromadb
-from sentence_transformers import SentenceTransformer
-from groq import Groq
 from dotenv import load_dotenv
+from groq import Groq
+from sentence_transformers import SentenceTransformer
+import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+ANSWER_NOT_FOUND = "The answer to this question was not found in the provided video's content."
+NON_EDUCATIONAL_MESSAGE = (
+    "This video does not appear to contain educational content. "
+    "Please provide an educational video to continue."
+)
+LLM_MODEL = "openai/gpt-oss-120b"
+MIN_TRANSCRIPT_WORDS = 20
+
 
 def format_time(seconds):
-    """Seconds ko MM:SS format mein convert karne ke liye"""
+    """Convert seconds to MM:SS."""
     mins = int(seconds // 60)
     secs = int(seconds % 60)
     return f"{mins:02d}:{secs:02d}"
 
+
+def _get_groq_client():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets.get("GROQ_API_KEY")
+        except StreamlitSecretNotFoundError:
+            api_key = None
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY is not configured. Set it in .env for local use or "
+            "in Streamlit Cloud app secrets for deployment."
+        )
+    return Groq(api_key=api_key)
+
+
+@lru_cache(maxsize=1)
+def _get_embedding_model():
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+
 def get_chroma_collection(db_path="vector_db"):
-    """ChromaDB persistent client aur collection initialize karta hai"""
+    """Return the persistent collection used for all isolated video records."""
     client = chromadb.PersistentClient(path=db_path)
-    collection = client.get_or_create_collection(name="video_lectures")
-    return collection
+    return client.get_or_create_collection(name="video_lectures")
 
-def store_chunks_in_chroma(json_path, db_path="vector_db"):
-    """Chunks ko load karke ChromaDB vector store mein embeddings ke sath save karta hai"""
+
+def _chunk_text(chunks):
+    return " ".join(
+        chunk.get("text", "").strip()
+        for chunk in chunks
+        if isinstance(chunk, dict)
+        and isinstance(chunk.get("text"), str)
+        and chunk["text"].strip()
+    )
+
+
+def classify_educational_content(chunks, video_title=""):
+    """Classify transcript content; a title alone is never sufficient evidence."""
+    transcript = _chunk_text(chunks)
+    if len(transcript.split()) < MIN_TRANSCRIPT_WORDS:
+        raise ValueError(
+            "The video transcript is empty or too short to classify. "
+            "Please provide another video with clear spoken content."
+        )
+
+    evidence_text = transcript[:12000]
+    prompt = f"""
+Classify whether the following video's spoken content is educational or genuinely informative.
+Accept lessons, lectures, tutorials, explanations, technical discussions, and informative
+documentaries. Reject movies, entertainment shorts, music videos, advertisements, and company
+promotions that only market a product or organization. Technical vocabulary by itself is not
+evidence of education: the transcript must actually teach, explain, or inform. Use the transcript
+as the primary evidence; the title is only supplemental and must never determine the result.
+Return only a JSON object with boolean "educational" and a concise string "reason".
+
+Title (supplemental only): {video_title}
+Transcript:
+{evidence_text}
+"""
+    response = _get_groq_client().chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "Classify video content conservatively using transcript evidence only.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    content = response.choices[0].message.content
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("The content classifier returned an empty response.")
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("The content classifier returned invalid JSON.") from error
+
+    if not isinstance(result, dict):
+        raise RuntimeError("The content classifier returned an invalid result.")
+    educational = result.get("educational")
+    reason = result.get("reason")
+    if not isinstance(educational, bool) or not isinstance(reason, str):
+        raise RuntimeError("The content classifier returned an invalid result.")
+    return educational, reason
+
+
+def store_chunks_in_chroma(chunks, db_path, video_id, session_id):
+    """Replace only this session/video's chunks and store isolated metadata."""
+    if not video_id or not session_id:
+        raise ValueError("Both video_id and session_id are required for indexing.")
+
+    valid_chunks = [
+        chunk
+        for chunk in chunks
+        if isinstance(chunk.get("text"), str) and chunk["text"].strip()
+    ]
+    if not valid_chunks:
+        raise ValueError("Cannot index a video without transcript text.")
+
     collection = get_chroma_collection(db_path)
-    
-    # Check if data already exists to avoid re-embedding
-    if collection.count() > 0:
-        print("[INFO] ChromaDB mein data pehle se stored hai. Skipping embedding generation.")
-        return collection
+    where = {"$and": [{"session_id": session_id}, {"video_id": video_id}]}
+    collection.delete(where=where)
 
-    print("[INFO] Transcript chunks JSON file se load kiye ja rahe hain...")
-    with open(json_path, "r", encoding="utf-8") as f:
-        chunks = json.load(f)
+    ids = []
+    documents = []
+    metadatas = []
+    for index, chunk in enumerate(valid_chunks):
+        ids.append(f"{session_id}:{video_id}:{index}")
+        documents.append(chunk["text"].strip())
+        metadatas.append(
+            {
+                "session_id": session_id,
+                "video_id": video_id,
+                "start": float(chunk["start"]),
+                "end": float(chunk["end"]),
+            }
+        )
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    
-    ids, documents, embeddings, metadatas = [], [], [], []
-
-    for i, chunk in enumerate(chunks):
-        chunk_id = f"chunk_{i}"
-        text = chunk["text"]
-        start = chunk["start"]
-        end = chunk["end"]
-
-        emb = model.encode(text).tolist()
-
-        ids.append(chunk_id)
-        documents.append(text)
-        embeddings.append(emb)
-        metadatas.append({"start": float(start), "end": float(end)})
-
-    print("[INFO] Chunks and embeddings are storing in ChromaDB ...")
-    collection.add(
+    embeddings = _get_embedding_model().encode(documents).tolist()
+    collection.upsert(
         ids=ids,
         documents=documents,
         embeddings=embeddings,
-        metadatas=metadatas
+        metadatas=metadatas,
     )
-    print(f"[SUCCESS] Data successfully stored in ChromaDB vector database!")
     return collection
 
-def retrieve_top_chunks(query, collection, top_k=5):  # <-- top_k ko 3 se 5 kar diya
-    print(f"\n[QUERY] Student Question: '{query}'")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    query_embedding = model.encode(query).tolist()
 
+def retrieve_top_chunks(query, collection, video_id, session_id, top_k=5):
+    """Retrieve transcript chunks only from the active session and video."""
+    if not video_id or not session_id:
+        raise ValueError("Both video_id and session_id are required for retrieval.")
+
+    query_embedding = _get_embedding_model().encode(query).tolist()
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=top_k
+        n_results=top_k,
+        where={"$and": [{"session_id": session_id}, {"video_id": video_id}]},
     )
-    
-    top_chunks = []
-    for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
-        top_chunks.append({
-            "text": doc,
-            "start": meta["start"],
-            "end": meta["end"]
-        })
-    return top_chunks
 
-def generate_ai_tutor_response(query, top_chunks):
-    """Groq LLM ka use karke professional AI Teaching Assistant response generate karta hai"""
-    print("[INFO] AI Teaching Assistant ke liye professional prompt banaya ja raha hai...")
-    
-    context_lines = []
-    for chunk in top_chunks:
-        start_fmt = format_time(chunk['start'])
-        end_fmt = format_time(chunk['end'])
-        context_lines.append(f"[Timestamp: {start_fmt} - {end_fmt}] {chunk['text']}")
-    context = "\n".join(context_lines)
-    
+    documents = (results.get("documents") or [[]])[0]
+    metadatas = (results.get("metadatas") or [[]])[0]
+    return [
+        {
+            "text": document,
+            "start": metadata["start"],
+            "end": metadata["end"],
+        }
+        for document, metadata in zip(documents, metadatas)
+        if document and metadata
+    ]
+
+
+def generate_ai_tutor_response(query, top_chunks, chat_history=None):
+    """Generate an answer grounded exclusively in the retrieved video transcript."""
+    if not top_chunks:
+        return ANSWER_NOT_FOUND
+
+    context_lines = [
+        f"[Timestamp: {format_time(chunk['start'])} - {format_time(chunk['end'])}] "
+        f"{chunk['text']}"
+        for chunk in top_chunks
+    ]
+    history_lines = []
+    for message in (chat_history or [])[-8:]:
+        role = message.get("role")
+        content = message.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            history_lines.append(f"{role}: {content}")
+
     prompt = f"""
-    [ROLE]
-    You are an expert, patient, and knowledgeable AI Teaching Assistant. Your goal is to help students understand concepts clearly based strictly on the provided lecture transcript material.
+Answer the student's question using only the video transcript evidence below.
+Conversation history is included only to resolve references in a follow-up question; it is not
+evidence and must not supply facts. Do not use outside knowledge or invent details, examples,
+timestamps, or explanations. If the answer is not supported by the transcript evidence, reply
+exactly: "{ANSWER_NOT_FOUND}"
+Include timestamp ranges from the transcript when they support the answer.
 
-    [CONSTRAINTS]
-    1. Grounding: Answer the student's question using the provided context below. If the exact topic isn't found using the exact keywords, look for closely related concepts or overview topics mentioned in the text and explain them.
-    2. Fallback: Only if the context is completely unrelated to the question, explicitly say: "I couldn't find this topic in the uploaded lecture material."
-    3. Tone: Academic, encouraging, and precise.
+Same-video conversation history:
+{chr(10).join(history_lines) or "(none)"}
 
-    [OUTPUT FORMAT]
-    - **Direct Answer:** Clear and structured explanation.
-    - **Reference Timestamp(s):** Formatted MM:SS timestamp range where this is taught.
+Current video transcript evidence:
+{chr(10).join(context_lines)}
 
-    ---
-    [LECTURE CONTEXT]
-    {context}
-
-    [STUDENT QUESTION]
-    {query}
-
-    [YOUR TUTOR RESPONSE]:
-    """
-    
-    print("[INFO] Groq LLM se response liya ja raha hai...")
-    client = Groq(api_key=GROQ_API_KEY)
-    response = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
+Student question:
+{query}
+"""
+    response = _get_groq_client().chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a video-grounded educational assistant. The provided transcript "
+                    "is the only source of factual answers."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
     )
-    return response.choices[0].message.content
+    answer = response.choices[0].message.content
+    if not isinstance(answer, str) or not answer.strip():
+        raise RuntimeError("The question-answering model returned an empty response.")
+    return answer.strip()

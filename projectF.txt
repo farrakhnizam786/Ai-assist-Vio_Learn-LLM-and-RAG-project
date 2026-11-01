@@ -1,56 +1,260 @@
-# 📚 Detailed Project Documentation & Engineering Journey
+# AI Teaching Assistant - Project Guide
 
-## 📁 1. File & Function Breakdown (Files aur Functions ka Kaam)
+Yeh project ek video-based educational assistant hai. User video upload ya video link deta hai;
+application uska audio transcript mein badalti hai, transcript ka educational content check karti
+hai, transcript ko ChromaDB mein index karti hai, aur phir usi active video ke evidence se jawab
+deti hai.
 
-### A. transcribe.py (Audio Extraction & Transcription Module)
-* **`convert_video_to_mp3(video_path, audio_path)`**:
-  * *Kaam:* MoviePy library ka use karke input video file se raw audio ko .mp3 format mein extract karta hai.
-  * *Change karne par kya asar hoga:* Agar aap audio format ya codec (`libmp3lame`) badlenge, toh audio ki compatibility ya file size par asar pad sakta hai.
-* **`transcribe_and_optimize_chunks(audio_path, json_path)`**:
-  * *Kaam:* OpenAI-Whisper model load karta hai, audio ko text mein transcribe karta hai, aur chote-chote segments ko combine karke ~400 characters ke optimized chunks banata hai.
-  * *Change karne par kya asar hoga:* Agar chunk size chota karenge toh context toot sakta hai; agar bohot bada karenge toh LLM par token load badh jayega.
+## 1. Project mein kya hota hai?
 
-### B. rag_pipeline.py (Vector Search, Embedding & LLM Generation Module)
-* **`get_chroma_collection(db_path)`**:
-  * *Kaam:* ChromaDB ka persistent client initialize karta hai taaki vector database local disk par save rahe.
-* **`store_chunks_in_chroma(json_path, db_path)`**:
-  * *Kaam:* Sentence-Transformers (`all-MiniLM-L6-v2`) ka use karke text chunks ki embeddings banata hai aur unhe metadatas (timestamps) ke sath ChromaDB mein index karta hai.
-* **`retrieve_top_chunks(query, collection, top_k)`**:
-  * *Kaam:* Student ke question ki embedding nikal kar ChromaDB mein semantic similarity search run karta hai aur top matching chunks pull karta hai.
-* **`format_time(seconds)`**:
-  * *Kaam:* Raw seconds ko user-friendly MM:SS format (jaise 02:19) mein convert karta hai.
-* **`generate_ai_tutor_response(query, top_chunks)`**:
-  * *Kaam:* Ek professional AI Teaching Assistant prompt (Role, Constraints, Fallback, Output Format) taiyar karta hai aur Groq LLM API ko call karke exact answer generate karwata hai.
+### Input
 
-### C. main.py (Master Orchestrator)
-* **Kaam:** Saare modules (`transcribe.py` aur `rag_pipeline.py`) ko ek sequential flow mein connect karta hai. Isko run karte hi poora pipeline (Video -> MP3 -> Transcription -> ChromaDB -> Retrieval -> LLM Answer) automatic execute ho jata hai.
+- Streamlit UI mein local video upload ki ja sakti hai ya `yt-dlp` se supported video URL download
+  kiya ja sakta hai.
+- `main.py` command-line mode mein `input_videos/` ke andar ka local video leta hai.
 
----
+### Processing
 
-## 🛠️ 2. Changes Made During Development (Humne Kya-Kya Improvements Kiye)
-* **Explicit Video-to-MP3 Step:** Direct video transcription se move karke moviepy ke zariye proper audio extraction add kiya taaki pipeline zyada robust bane.
-* **Chunk Optimization (Bonus Feature):** Whisper ke raw short sentences ko combine karke meaningful blocks banaye taaki LLM ko behtar context mile.
-* **ChromaDB Integration:** Pandas/Joblib se shift karke industry-standard ChromaDB Vector Database lagaya jo scaling ke liye best hai.
-* **Timestamp Formatting:** Seconds (139.0s) ko professional MM:SS format mein badla.
-* **Prompt Engineering:** General prompt ko ek strict AI Teaching Assistant Prompt mein upgrade kiya jisme hallucination rokne ke liye fallback rules aur constraints hain.
+1. **Audio extraction:** MoviePy selected video ka audio MP3 mein nikalta hai.
+2. **Transcription:** OpenAI Whisper speech ko text segments mein convert karta hai.
+3. **Chunking:** Chote segments ko lagbhag 400 characters ke chunks mein group kiya jata hai.
+   Har chunk ke saath start/end time seconds mein rakhe jate hain.
+4. **Transcript check:** Agar transcript khali ho toh processing fail hoti hai. 20 se kam words
+   hone par transcript educational classification ke liye insufficient mana jata hai.
+5. **Educational classification:** Groq ko transcript diya jata hai. Filename/title secondary
+   information hai; sirf technical shabd hone se video ko educational nahin maana jana chahiye.
+6. **Embedding/indexing:** `all-MiniLM-L6-v2` har chunk ka embedding banata hai. ChromaDB mein
+   chunk text, timestamp, `video_id`, aur `session_id` store hote hain.
+7. **Question answering:** Question embedding se matching chunks retrieve hote hain, magar sirf
+   active video aur active session ke liye. Groq ko wahi chunks jawab ka source diye jate hain.
 
----
+### Output
 
-## ⚠️ 3. Problems Faced & How We Solved Them (Aayi Hui Rukawatein aur Solutions)
-* **Problem 1: ModuleNotFoundError for Whisper & MoviePy**
-  * *Reason:* Virtual environment (`AIassisTeacher`) ke andar packages install nahi the.
-  * *Solution:* `pip install openai-whisper moviepy sentence-transformers chromadb groq python-dotenv` run karke dependencies set kiin.
-* **Problem 2: SyntaxError: invalid decimal literal**
-  * *Reason:* Python mein kisi bhi file/module ka naam number se start nahi ho sakta (`1_transcribe.py`).
-  * *Solution:* File ke naam se numbers hata kar clean naam (`transcribe.py`) rakhe.
-* **Problem 3: MoviePy v2.x Import Error (`ModuleNotFoundError: No module named 'moviepy.editor'`)**
-  * *Reason:* MoviePy ke naye version mein `moviepy.editor` module ko remove kar diya gaya hai.
-  * *Solution:* Import ko update karke `from moviepy import VideoFileClip` kar diya.
+- Educational video process hone par user us par chat kar sakta hai.
+- Non-educational classification par UI yeh message dikhata hai:
 
----
+  `This video does not appear to contain educational content. Please provide an educational video to continue.`
 
-## 🚀 4. Future Upgrades (Aage Isme Kya Add Kar Sakte Hain)
-* **Interactive Web UI (Streamlit / Gradio):** Ek simple web dashboard jahan user apni video upload kar sake aur ChatGPT ki tarah chat interface par sawal pooch sake.
-* **Clickable Video Timestamps:** UI mein timestamps ko clickable link banana taaki student us par click kare aur video direct usi exact second par play ho jaye.
-* **Multi-video Support:** Ek sath multiple lecture videos ya poori playlist ka folder index karne ki capability.
-* **Evaluation & Metrics:** RAG pipeline ki accuracy check karne ke liye Ragas ya custom evaluation script add karna.
+- Transcript evidence na milne par assistant yeh response deta hai:
+
+  `The answer to this question was not found in the provided video's content.`
+
+## 2. File aur folder guide
+
+| File/folder | Iska kaam |
+|---|---|
+| `app.py` | Streamlit UI, file upload, URL download, video selection, processing aur chat. |
+| `main.py` | Terminal se local video process karne aur ek sawal ka jawab lene ka workflow. |
+| `transcribe.py` | Video se audio nikalna, Whisper transcription, aur timestamped chunks banana. |
+| `rag_pipeline.py` | Transcript classification, embeddings, ChromaDB storage/retrieval, aur Groq answer generation. |
+| `requirements.txt` | Project chalane ke liye required Python packages. |
+| `packages.txt` | Streamlit Cloud host par install hone wala FFmpeg system package. |
+| `.env` | `GROQ_API_KEY` environment variable; is file ko public repository mein commit na karein. |
+| `.env.example` | Local setup ke liye placeholder template; ismein real API key nahin hoti. |
+| `input_videos/` | Uploaded aur downloaded videos. |
+| `output_data/` | Har video ke alag MP3 aur transcript JSON outputs. |
+| `vector_db/` | Persistent ChromaDB files. |
+| `tests/test_video_isolation.py` | Video/session isolation, reprocessing, transcript aur fallback behavior ke regression tests. |
+| `Readme.md` | Setup, user workflow, architecture aur test instructions. |
+
+## 3. Important functions
+
+### `transcribe.py`
+
+#### `convert_video_to_mp3(video_path, audio_path)`
+
+- Confirm karta hai ki source video maujood hai.
+- Purani output audio hata kar selected video se fresh audio nikalta hai.
+- Audio track missing ho ya output file khali ho toh error deta hai.
+- Audio extraction fail hone par video process nahin hota.
+
+#### `transcribe_and_optimize_chunks(audio_path, json_path)`
+
+- Purani JSON transcript ko cache ke roop mein reuse nahin karta.
+- Whisper `base` model se audio transcribe karta hai.
+- Segments ko lagbhag 400 characters ke timestamped chunks mein jodta hai.
+- Speech/transcript na milne par error deta hai, purana transcript nahin.
+
+### `rag_pipeline.py`
+
+#### `format_time(seconds)`
+
+Seconds ko `MM:SS` format mein dikhata hai, jaise `139` seconds ko `02:19`.
+
+#### `get_chroma_collection(db_path="vector_db")`
+
+Persistent Chroma client ke `video_lectures` collection ko kholta ya banata hai. Database shared
+collection hai; isolation metadata filtering se hoti hai.
+
+#### `classify_educational_content(chunks, video_title="")`
+
+- Transcript text ko primary evidence ke roop mein Groq ko bhejta hai.
+- Bahut chote transcript ko LLM se classification karne se pehle reject karta hai.
+- Groq se JSON mein `educational` boolean aur `reason` leta hai.
+- API error ya invalid JSON par processing fail hoti hai; silent acceptance nahin hoti.
+
+#### `store_chunks_in_chroma(chunks, db_path, video_id, session_id)`
+
+- Har chunk ka embedding banata hai aur text/timestamp/IDs ChromaDB mein `upsert` karta hai.
+- IDs mein session, video aur chunk number shamil hote hain.
+- Reprocessing se pehle sirf usi `session_id` + `video_id` ke chunks delete hote hain.
+- Kisi doosre video ya session ka data delete nahin hota.
+
+#### `retrieve_top_chunks(query, collection, video_id, session_id, top_k=5)`
+
+- Sawal ka embedding banata hai.
+- Chroma query par `session_id` aur `video_id` dono ka filter lagata hai.
+- Doosre video/session ke chunks ko active Q&A context mein aane se rokta hai.
+
+#### `generate_ai_tutor_response(query, top_chunks, chat_history=None)`
+
+- Retrieved transcript aur available timestamps ko Groq prompt mein rakhta hai.
+- Same-video chat history ko sirf follow-up sawal samajhne mein istemal karta hai; history factual
+  evidence nahin hai.
+- Chunks na milne par model call kiye bina required not-found sentence return karta hai.
+- Model ko transcript se bahar ke facts, timestamps aur explanations na banane ka instruction hai.
+- Groq API error ya khali response ko error ke roop mein surface karta hai.
+
+### `app.py`
+
+- Har Streamlit session ke liye alag `session_id` banata hai.
+- Video path ke liye us session mein stable `video_id` rakhta hai.
+- Uploaded file ko content hash wale naam se aur downloaded URL ko unique naam se save karta hai.
+- Web app ke source videos ko `input_videos/<session_id>/` mein rakhta hai, taaki ek user ki video
+  list doosre Streamlit session mein na dikhe.
+- Processing mein alag video-ID wale MP3/transcript paths use karta hai.
+- Video selection badalne par active chat clear/deactivate karta hai.
+- Educational classification aur indexing successful hone ke baad hi chat dikhata hai.
+- Har sawal par active IDs ke saath filtered retrieval karta hai.
+- Delete karne par current session/video ke chunks delete karta hai; doosre data ko nahin.
+
+### `main.py`
+
+Command-line runner local `input_videos/` se ek video process karta hai. Har run ke liye alag
+session/video IDs banata hai, educational classification karta hai aur filtered retrieval se ek
+question ka answer deta hai.
+
+## 4. Video aur user session isolation kaise kaam karti hai?
+
+- `session_id` alag Streamlit sessions ko distinguish karta hai.
+- `video_id` active source video ke chunks ko identify karta hai.
+- Dono IDs har Chroma chunk ke metadata mein save hote hain.
+- Retrieval mein dono IDs required hain; sirf collection se nearest chunks maangna allowed nahin.
+- Video selection badalne par purana chat history state clear hota hai.
+- Follow-up context active session/video ke chat se hi aata hai.
+- Audio/transcript filename video ID par based hai aur har processing run fresh extraction/
+  transcription karta hai.
+- Purane database chunks, jinmein IDs nahin hain, database se automatically wipe nahin kiye jate;
+  active filtered query unhe return nahin karti.
+
+Yeh application-level isolation hai. Agar `vector_db/` ko doosre programs/users ko direct access
+diya jaye, toh OS/database permissions alag se secure karni hongi.
+
+## 5. Is implementation mein kya changes/improvements hue?
+
+1. **Purane video context ka root cause fix:** Pehle sab videos ke liye fixed
+   `extracted_audio.mp3` aur `transcript_chunks.json` paths the. Ab outputs video-specific hain aur
+   har process mein fresh banaye jate hain.
+2. **Stale Chroma indexing fix:** Pehle collection mein koi bhi data ho toh naye chunks index hi
+   nahin hote the. Ab target video/session chunks ko scoped delete karke `upsert` kiya jata hai.
+3. **Retrieval isolation:** `video_id` aur `session_id` metadata filter har retrieval par lagta hai.
+4. **Chat state isolation:** Active video selection badalne par old chat clear hota hai; har user
+   session ka alag ID hota hai.
+5. **Educational content detection:** Transcript primary evidence hai; empty/short transcript par
+   classifier se andaaza lagane ke bajay processing roki jati hai.
+6. **Grounded answer fallback:** Retrieved context na ho toh exact not-found response. Prompt mein
+   outside knowledge aur invented timestamps/facts ko mana kiya gaya hai.
+7. **Error visibility:** Invalid URL, download failure, missing audio, empty transcript,
+   classification/embedding/Chroma/Groq errors ko UI ya terminal mein dikhaya jata hai.
+8. **Reprocessing safety:** Ek video reprocess karne par sirf usi session/video ke vector chunks
+   replace hote hain; baaki videos aur sessions database mein rehte hain.
+9. **Dependencies aur documentation:** `requirements.txt` mein shell install commands ki jagah
+   Python package names rakhe gaye; is `projectF.txt` aur `Readme.md` ko updated flow ke mutabiq
+   likha gaya.
+10. **Regression tests:** Fake Whisper/Groq/embedding responses aur real ephemeral Chroma collection
+    ke saath isolation, reprocessing, empty transcript aur fallback behaviors test kiye gaye.
+11. **Streamlit deployment support:** `packages.txt` FFmpeg install karta hai, Streamlit Cloud
+    secrets se Groq key read hoti hai, aur `.gitignore` `.env*` plus Streamlit secrets ko exclude
+    karta hai. `.env.example` sirf placeholder deta hai.
+
+## 6. Setup aur run commands
+
+Python dependencies:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+`.env` file mein:
+
+```text
+GROQ_API_KEY=your_groq_api_key
+```
+
+Streamlit UI:
+
+```powershell
+streamlit run app.py
+```
+
+Terminal mode:
+
+```powershell
+python main.py
+```
+
+Tests:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Whisper ke liye FFmpeg `PATH` mein hona chahiye. `requirements.txt` Python packages install karta
+hai; FFmpeg aur Groq API key separately configure karne hote hain.
+
+### Streamlit Community Cloud par deploy karna
+
+1. Is project ko GitHub repository par push karein. `.env`, `.streamlit/secrets.toml`, videos,
+   transcripts, aur vector DB ko Git mein add na karein; `.gitignore` in local files/folders ko
+   exclude karta hai.
+2. [share.streamlit.io](https://share.streamlit.io/) mein GitHub se sign in karke **Create app**
+   karein. Repository/branch select karein aur main file path `app.py` dein. Python version poocha
+   jaye toh Python 3.11 select karein.
+3. App settings ke **Secrets** section mein yeh TOML secret add karein:
+
+   ```toml
+   GROQ_API_KEY = "your_actual_groq_api_key"
+   ```
+
+4. Build complete hone par hosting provider ka Streamlit URL open karein. Pehli run mein Whisper
+   aur embedding model downloads ki wajah se startup/processing slow ho sakti hai.
+
+Cloud par `.env` upload karne ki zaroorat nahin: `rag_pipeline.py` environment variable pehle aur
+Streamlit secret uske baad check karta hai. `packages.txt` host par FFmpeg install karta hai.
+
+### Deployment ki storage aur resource limits
+
+Web UI uploaded/downloaded videos ko per-session local folder mein save karti hai. Chroma database
+bhi app instance par local hai. Isliye users ki video list UI mein alag rehti hai, lekin Streamlit
+Community Cloud local files durable nahin hain: restart, redeploy, ya instance replacement par
+videos/transcripts/index mit sakte hain aur dobara process karne pad sakte hain. Durable, production
+multi-user storage ke liye external object storage aur managed vector database configure karne
+honge; woh is project mein abhi wired nahin hain.
+
+Whisper aur embeddings CPU, RAM aur disk use karte hain. Badi videos ya concurrent users hosting
+limits se takra sakte hain. Default deployed link public hota hai jab tak hosting settings mein
+access restriction na lagayi jaye. Private video ya secret ko public app mein na daalein.
+
+## 7. Test ki seema aur future improvements
+
+Current tests local transcript/indexing logic ko check karte hain; real video download, live Whisper
+model inference, real Groq classification, aur real Groq answer generation end-to-end nahin chalate.
+Classification LLM-based hai, isliye use perfect content moderation guarantee nahin samajhna chahiye.
+Current RAG pipeline audio transcript par based hai; video ke visual slides/frames ko analyze nahin
+karta.
+
+Agli improvements ho sakti hain:
+
+- Video player/timestamps par click karke us waqt par jump karna.
+- Actual videos/transcripts ke saath classification aur answer quality evaluation.
+- Slides/frame extraction, agar visual content se sawalon ka jawab dena ho.

@@ -1,5 +1,7 @@
-# Private API Keys & Secrets (SABSE IMPORTANT)
-.env
+# Private API Keys & Secrets (never commit these)
+.env*
+!.env.example
+.streamlit/secrets.toml
 
 # Virtual Environment & Python Cache
 .venv/
