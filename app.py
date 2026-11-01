@@ -1,10 +1,8 @@
 import hashlib
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
 
 import streamlit as st
-import yt_dlp
 
 from rag_pipeline import (
     NON_EDUCATIONAL_MESSAGE,
@@ -15,6 +13,7 @@ from rag_pipeline import (
     store_chunks_in_chroma,
 )
 from transcribe import convert_video_to_mp3, transcribe_and_optimize_chunks
+from video_downloader import download_video_from_url
 
 st.set_page_config(
     page_title="AI Teaching Assistant",
@@ -68,94 +67,6 @@ if "video_ids" not in st.session_state:
     st.session_state.video_ids = {}
 if "last_selected_video" not in st.session_state:
     st.session_state.last_selected_video = None
-
-def download_video_from_url(url, download_dir):
-    url = url.strip()
-    download_dir = Path(download_dir)
-    download_dir.mkdir(parents=True, exist_ok=True)
-
-    parsed_url = urlparse(url)
-
-    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-        raise ValueError("Enter a valid HTTP or HTTPS video URL.")
-
-    download_id = uuid.uuid4().hex
-    output_template = str(
-        download_dir / f"downloaded_{download_id}.%(ext)s"
-    )
-
-    options = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "outtmpl": output_template,
-        "quiet": True,
-        "no_warnings": False,
-        "noplaylist": True,
-        "overwrites": True,
-        "merge_output_format": "mp4",
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(options) as downloader:
-            info = downloader.extract_info(url, download=True)
-
-            requested_downloads = info.get("requested_downloads") or []
-
-            candidates = [
-                Path(item["filepath"])
-                for item in requested_downloads
-                if item.get("filepath")
-            ]
-
-            candidates.append(Path(downloader.prepare_filename(info)))
-            candidates.extend(
-                download_dir.glob(f"downloaded_{download_id}.*")
-            )
-
-    except Exception as error:
-        raise RuntimeError(
-            f"Actual download error: {type(error).__name__}: {error}"
-        ) from error
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-
-    raise RuntimeError("Download completed but no video file was found.")
-# def download_video_from_url(url, download_dir):
-#     parsed_url = urlparse(url.strip())
-#     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-#         raise ValueError("Enter a valid HTTP or HTTPS video URL.")
-
-#     download_id = uuid.uuid4().hex
-#     output_template = str(download_dir / f"downloaded_{download_id}.%(ext)s")
-#     options = {
-#         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-#         "outtmpl": output_template,
-#         "quiet": True,
-#         "overwrites": True,
-#         "extractor_args": {"youtube": {"player_client": ["default"]}},
-#     }
-#     try:
-#         with yt_dlp.YoutubeDL(options) as downloader:
-#             info = downloader.extract_info(url.strip(), download=True)
-#             requested_downloads = info.get("requested_downloads") or []
-#             candidates = [
-#                 Path(download["filepath"])
-#                 for download in requested_downloads
-#                 if download.get("filepath")
-#             ]
-#             candidates.append(Path(downloader.prepare_filename(info)))
-#             candidates.extend(download_dir.glob(f"downloaded_{download_id}.*"))
-#     except Exception as error:
-#         raise RuntimeError(
-#             "Download failed. Confirm the URL is valid and the video platform is supported."
-#         ) from error
-
-#     for candidate in candidates:
-#         if candidate.is_file():
-#             return str(candidate)
-#     raise RuntimeError("The download completed without producing a video file.")
-
 
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/artificial-intelligence.png", width=70)
@@ -281,23 +192,27 @@ if process_btn and selected_video:
 
     progress_bar = st.progress(0)
     status_text = st.empty()
+    processing_stage = "Audio extraction"
     try:
         status_text.text("🎙️ Step 1/4: Extracting audio...")
         audio_path = str(OUTPUT_DIR / f"{video_id}.mp3")
         audio_file = convert_video_to_mp3(video_path, audio_path)
         progress_bar.progress(25)
 
+        processing_stage = "Transcription"
         status_text.text("📝 Step 2/4: Transcribing video...")
         json_path = str(OUTPUT_DIR / f"{video_id}.json")
         chunks = transcribe_and_optimize_chunks(audio_file, json_path)
         progress_bar.progress(50)
 
+        processing_stage = "Educational content check"
         status_text.text("🎓 Step 3/4: Checking educational content...")
         educational, reason = classify_educational_content(chunks, selected_video)
         if not educational:
             raise ValueError(NON_EDUCATIONAL_MESSAGE)
         progress_bar.progress(75)
 
+        processing_stage = "Transcript indexing"
         status_text.text("🗄️ Step 4/4: Indexing transcript for this video...")
         store_chunks_in_chroma(
             chunks,
@@ -318,7 +233,7 @@ if process_btn and selected_video:
         if str(error) == NON_EDUCATIONAL_MESSAGE:
             st.error(NON_EDUCATIONAL_MESSAGE)
         else:
-            st.error(f"❌ Could not process this video: {error}")
+            st.error(f"❌ {processing_stage} failed: {error}")
 
 if st.session_state.current_video_id:
     st.subheader(f"💬 Chatting about: `{st.session_state.current_video}`")

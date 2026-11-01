@@ -30,8 +30,9 @@ If there is no retrieved transcript evidence, the app responds:
 
 ## Requirements and setup
 
-- Python 3.10+
+- Python 3.11+
 - FFmpeg available on `PATH` (used by Whisper)
+- yt-dlp's JavaScript challenge runtime and scripts (installed by `yt-dlp[default,deno]`)
 - A Groq API key
 
 Install dependencies from this directory:
@@ -75,8 +76,14 @@ Wait for processing and educational classification to finish before asking quest
 5. Wait for the first build to finish, then open the Streamlit URL it provides. The first run may
    take longer because Whisper and the embedding model must be downloaded.
 
-`packages.txt` installs FFmpeg on the Streamlit host, which Whisper needs. `requirements.txt`
-installs the Python packages.
+`packages.txt` installs FFmpeg on the Streamlit host, which Whisper and yt-dlp's stream merger
+need. `requirements.txt` pins yt-dlp and installs its EJS challenge scripts and Deno JavaScript
+runtime. The downloader logs the yt-dlp, EJS, runtime, FFmpeg, and FFprobe availability at each
+attempt; it never uses account cookies or authentication workarounds.
+
+YouTube can restrict requests from hosting-provider IP addresses or return empty media responses.
+The deployment configuration cannot override those platform-side restrictions, so some videos may
+remain unavailable from Streamlit Community Cloud even when the same URL works locally.
 
 ### Hosting limitations
 
@@ -131,6 +138,8 @@ database access controls if the database is exposed to untrusted users or servic
 | `input_videos/` | Session-specific uploaded and downloaded source video folders (local CLI files may also be placed at the root). |
 | `output_data/` | Per-video extracted audio and transcript JSON files. |
 | `vector_db/` | Persistent ChromaDB data. |
+| `video_downloader.py` | yt-dlp extraction, download/merge diagnostics, output validation, and cleanup. |
+| `tests/test_video_downloader.py` | Regression tests for YouTube URL forms, extraction/download/merge failures, and transcription handoff. |
 | `tests/test_video_isolation.py` | Regression tests for video/session isolation, reprocessing, classification boundaries, and empty transcripts. |
 | `requirements.txt` | Python package dependencies. |
 | `packages.txt` | System packages installed by Streamlit Community Cloud (FFmpeg). |
