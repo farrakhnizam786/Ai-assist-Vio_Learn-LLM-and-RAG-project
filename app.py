@@ -69,41 +69,92 @@ if "video_ids" not in st.session_state:
 if "last_selected_video" not in st.session_state:
     st.session_state.last_selected_video = None
 
-
 def download_video_from_url(url, download_dir):
-    parsed_url = urlparse(url.strip())
+    url = url.strip()
+    download_dir = Path(download_dir)
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    parsed_url = urlparse(url)
+
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise ValueError("Enter a valid HTTP or HTTPS video URL.")
 
     download_id = uuid.uuid4().hex
-    output_template = str(download_dir / f"downloaded_{download_id}.%(ext)s")
+    output_template = str(
+        download_dir / f"downloaded_{download_id}.%(ext)s"
+    )
+
     options = {
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "outtmpl": output_template,
         "quiet": True,
+        "no_warnings": False,
+        "noplaylist": True,
         "overwrites": True,
-        "extractor_args": {"youtube": {"player_client": ["default"]}},
+        "merge_output_format": "mp4",
     }
+
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
-            info = downloader.extract_info(url.strip(), download=True)
+            info = downloader.extract_info(url, download=True)
+
             requested_downloads = info.get("requested_downloads") or []
+
             candidates = [
-                Path(download["filepath"])
-                for download in requested_downloads
-                if download.get("filepath")
+                Path(item["filepath"])
+                for item in requested_downloads
+                if item.get("filepath")
             ]
+
             candidates.append(Path(downloader.prepare_filename(info)))
-            candidates.extend(download_dir.glob(f"downloaded_{download_id}.*"))
+            candidates.extend(
+                download_dir.glob(f"downloaded_{download_id}.*")
+            )
+
     except Exception as error:
         raise RuntimeError(
-            "Download failed. Confirm the URL is valid and the video platform is supported."
+            f"Actual download error: {type(error).__name__}: {error}"
         ) from error
 
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
-    raise RuntimeError("The download completed without producing a video file.")
+
+    raise RuntimeError("Download completed but no video file was found.")
+# def download_video_from_url(url, download_dir):
+#     parsed_url = urlparse(url.strip())
+#     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+#         raise ValueError("Enter a valid HTTP or HTTPS video URL.")
+
+#     download_id = uuid.uuid4().hex
+#     output_template = str(download_dir / f"downloaded_{download_id}.%(ext)s")
+#     options = {
+#         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+#         "outtmpl": output_template,
+#         "quiet": True,
+#         "overwrites": True,
+#         "extractor_args": {"youtube": {"player_client": ["default"]}},
+#     }
+#     try:
+#         with yt_dlp.YoutubeDL(options) as downloader:
+#             info = downloader.extract_info(url.strip(), download=True)
+#             requested_downloads = info.get("requested_downloads") or []
+#             candidates = [
+#                 Path(download["filepath"])
+#                 for download in requested_downloads
+#                 if download.get("filepath")
+#             ]
+#             candidates.append(Path(downloader.prepare_filename(info)))
+#             candidates.extend(download_dir.glob(f"downloaded_{download_id}.*"))
+#     except Exception as error:
+#         raise RuntimeError(
+#             "Download failed. Confirm the URL is valid and the video platform is supported."
+#         ) from error
+
+#     for candidate in candidates:
+#         if candidate.is_file():
+#             return str(candidate)
+#     raise RuntimeError("The download completed without producing a video file.")
 
 
 with st.sidebar:
