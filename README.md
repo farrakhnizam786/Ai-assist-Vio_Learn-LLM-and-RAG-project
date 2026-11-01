@@ -1,7 +1,8 @@
-# Ai_assist-Teacher-LLM-and-RAG-project
-Ai_assist-Teacher/LLM and RAG project which able to answer using videos provided(converted to chunks and accuracy is more then 80%)
+# Ai-assist-Vio_Learn-LLM-and-RAG-project
 
-# 🎓 AI Teaching Assistant (Video RAG Pipeline)
+Ai-assist-Vio_Learn-LLM-and-RAG-project which able to answer using videos provided(converted to chunks and accuracy is more then 80%)
+
+# 🎓 Ai-assist-Vio_Learn-LLM-and-RAG-project (Video RAG Pipeline)
 
 An end-to-end Retrieval-Augmented Generation (RAG) system designed to process lecture videos/audio, transcribe them with precise timestamps, store embeddings in a persistent vector database, and answer student queries accurately using an advanced LLM.
 
