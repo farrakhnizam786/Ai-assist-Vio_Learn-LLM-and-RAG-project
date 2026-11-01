@@ -5,4 +5,4 @@ openai-whisper
 python-dotenv
 sentence-transformers
 streamlit
-yt-dlp[default]
+yt-dlp
